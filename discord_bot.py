@@ -53,13 +53,28 @@ async def create_commission(ctx, commission_type=None, *, skills=None):
 
     # Call Flask API to create commission
     try:
-        response = requests.post(f'{FLASK_SERVER_URL}/api/commissions', json={
-            'discord_id': str(ctx.author.id),
-            'username': ctx.author.name,
-            'display_name': ctx.author.display_name,
-            'commission_type': valid_types[commission_type],
-            'skills': skills.strip()
-        })
+        print(f"Connecting to Flask server at: {FLASK_SERVER_URL}")
+        
+        # Test if Flask server is reachable
+        health_response = requests.get(f'{FLASK_SERVER_URL}/', timeout=10)
+        if health_response.status_code != 200:
+            await ctx.send("❌ Commission system is currently offline. Please try again later.")
+            return
+        
+        response = requests.post(f'{FLASK_SERVER_URL}/api/commissions', 
+            json={
+                'discord_id': str(ctx.author.id),
+                'username': ctx.author.name,
+                'display_name': ctx.author.display_name,
+                'commission_type': valid_types[commission_type],
+                'skills': skills.strip()
+            },
+            timeout=10,
+            headers={'Content-Type': 'application/json'}
+        )
+        
+        print(f"API Response Status: {response.status_code}")
+        print(f"API Response Text: {response.text}")
         
         if response.status_code == 201:
             data = response.json()
@@ -77,16 +92,25 @@ async def create_commission(ctx, commission_type=None, *, skills=None):
             except discord.Forbidden:
                 await ctx.send(embed=embed)
         else:
-            error_data = response.json()
-            error_msg = f"❌ {error_data.get('error', 'Unknown error occurred')}"
+            try:
+                error_data = response.json()
+                error_msg = f"❌ {error_data.get('error', 'Unknown error occurred')}"
+            except:
+                error_msg = f"❌ Server error (Status: {response.status_code})"
+            
             try:
                 await ctx.author.send(error_msg)
                 await ctx.send("❌ Commission creation failed. Check your DMs for details.")
             except discord.Forbidden:
                 await ctx.send(error_msg)
             
+    except requests.exceptions.ConnectionError:
+        await ctx.send("❌ Cannot connect to commission system. Please check server status.")
+    except requests.exceptions.Timeout:
+        await ctx.send("❌ Commission system timeout. Please try again later.")
     except Exception as e:
-        await ctx.send(f"❌ Error connecting to commission system: {e}")
+        print(f"Unexpected error: {e}")
+        await ctx.send(f"❌ Error connecting to commission system. Please contact admin.")
 
 @bot.command(name='accept')
 async def accept_commission(ctx, commission_id: int):
