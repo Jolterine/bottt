@@ -1,0 +1,164 @@
+import os
+import discord
+import requests
+import asyncio
+from discord.ext import commands
+from datetime import datetime, timedelta
+
+# Discord bot setup
+intents = discord.Intents.default()
+intents.message_content = True
+intents.guilds = True
+
+bot = commands.Bot(command_prefix='!', intents=intents)
+
+# Configuration
+FLASK_SERVER_URL = os.environ.get('FLASK_SERVER_URL', 'http://localhost:5000')
+COMMISSION_CHANNEL_ID = int(os.environ.get("COMMISSION_CHANNEL_ID", "0"))
+GUILD_ID = int(os.environ.get("GUILD_ID", "0"))
+ADMIN_ROLE_NAME = os.environ.get("ADMIN_ROLE_NAME", "Admin")
+
+@bot.event
+async def on_ready():
+    print(f'{bot.user} has connected to Discord!')
+
+@bot.command(name='commission')
+async def create_commission(ctx, commission_type=None, *, skills=None):
+    """Create a new commission request"""
+    if not commission_type or not skills:
+        embed = discord.Embed(
+            title="Commission Creation",
+            description="Usage: `!commission <type> <skills>`\n\n"
+                       "**Types:**\n"
+                       "• `merc` - Merc for Hire\n"
+                       "• `team` - Merc Team for Hire\n"
+                       "• `task` - Task for a Merc Team\n\n"
+                       "**Example:** `!commission merc Python, Web Development, API Integration`",
+            color=0x7289DA
+        )
+        await ctx.send(embed=embed)
+        return
+
+    valid_types = {
+        'merc': 'Merc for Hire',
+        'team': 'Merc Team for Hire', 
+        'task': 'Task for a Merc Team'
+    }
+
+    if commission_type not in valid_types:
+        await ctx.send("❌ Invalid commission type. Use: `merc`, `team`, or `task`")
+        return
+
+    # Call Flask API to create commission
+    try:
+        response = requests.post(f'{FLASK_SERVER_URL}/api/commissions', json={
+            'discord_id': str(ctx.author.id),
+            'username': ctx.author.name,
+            'display_name': ctx.author.display_name,
+            'commission_type': valid_types[commission_type],
+            'skills': skills.strip()
+        })
+        
+        if response.status_code == 201:
+            data = response.json()
+            embed = discord.Embed(
+                title="✅ Commission Submitted",
+                description=f"Your **{valid_types[commission_type]}** request has been submitted for admin approval.\n\n"
+                           f"**Skills:** {skills}\n"
+                           f"**Commission ID:** #{data['commission_id']}\n\n"
+                           f"You'll receive a DM when your commission is approved or if there are any updates.",
+                color=0x00FF00
+            )
+            try:
+                await ctx.author.send(embed=embed)
+                await ctx.send(f"✅ Commission submitted! Check your DMs for confirmation.")
+            except discord.Forbidden:
+                await ctx.send(embed=embed)
+        else:
+            error_data = response.json()
+            error_msg = f"❌ {error_data.get('error', 'Unknown error occurred')}"
+            try:
+                await ctx.author.send(error_msg)
+                await ctx.send("❌ Commission creation failed. Check your DMs for details.")
+            except discord.Forbidden:
+                await ctx.send(error_msg)
+            
+    except Exception as e:
+        await ctx.send(f"❌ Error connecting to commission system: {e}")
+
+@bot.command(name='accept')
+async def accept_commission(ctx, commission_id: int):
+    """Accept a commission"""
+    try:
+        response = requests.post(f'{FLASK_SERVER_URL}/api/commissions/{commission_id}/accept', json={
+            'discord_id': str(ctx.author.id),
+            'username': ctx.author.name,
+            'display_name': ctx.author.display_name
+        })
+        
+        if response.status_code == 200:
+            data = response.json()
+            embed = discord.Embed(
+                title="🤝 Commission Accepted",
+                description=f"Commission #{commission_id} has been accepted!\n\n"
+                           f"Please coordinate with the commission creator.\n"
+                           f"You can now discuss project details and timeline.",
+                color=0x00FF00
+            )
+            try:
+                await ctx.author.send(embed=embed)
+                await ctx.send(f"✅ Commission #{commission_id} accepted! Check your DMs for details.")
+            except discord.Forbidden:
+                await ctx.send(embed=embed)
+        else:
+            error_data = response.json()
+            error_msg = f"❌ {error_data.get('error', 'Unknown error occurred')}"
+            try:
+                await ctx.author.send(error_msg)
+                await ctx.send("❌ Commission acceptance failed. Check your DMs for details.")
+            except discord.Forbidden:
+                await ctx.send(error_msg)
+            
+    except Exception as e:
+        await ctx.send(f"❌ Error connecting to commission system: {e}")
+
+@bot.command(name='help_commission')
+async def help_commission(ctx):
+    """Show help for commission commands"""
+    embed = discord.Embed(
+        title="🔧 Commission Bot Commands",
+        description="Commands for managing mercenary commissions",
+        color=0x7289DA
+    )
+    
+    embed.add_field(
+        name="📝 Create Commission",
+        value="`!commission <type> <skills>`\n"
+              "Types: `merc`, `team`, `task`",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="🤝 Accept Commission",
+        value="`!accept <commission_id>`\n"
+              "Accept an approved commission",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="📋 Commission Types",
+        value="• **merc** - Individual for hire\n"
+              "• **team** - Team for hire\n"
+              "• **task** - Task for a team",
+        inline=False
+    )
+    
+    await ctx.send(embed=embed)
+
+if __name__ == '__main__':
+    bot_token = os.environ.get('DISCORD_BOT_TOKEN')
+    if not bot_token:
+        print("Error: DISCORD_BOT_TOKEN environment variable not set")
+        exit(1)
+    
+    bot.run(bot_token)
